@@ -7,8 +7,8 @@ buildscript {
     }
 }
 
-repositories {
-    jcenter()
+plugins {
+    id 'com.github.kt3k.coveralls' version '2.4.0'
 }
 
 apply plugin: 'com.android.library'
@@ -30,6 +30,10 @@ android {
             testCoverageEnabled true
         }
     }
+}
+
+repositories {
+    jcenter()
 }
 
 dependencies {
