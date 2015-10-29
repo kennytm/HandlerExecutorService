@@ -1,13 +1,25 @@
 package hihex.util.concurrent;
 
 import android.os.HandlerThread;
+import android.os.Looper;
 
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.util.concurrent.SettableFuture;
 import com.google.common.util.concurrent.Uninterruptibles;
 
 import junit.framework.TestCase;
+
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricGradleTestRunner;
+import org.robolectric.Shadows;
+import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLooper;
 
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -15,15 +27,57 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@RunWith(RobolectricGradleTestRunner.class)
+@Config(constants=BuildConfig.class, sdk=21)
 public final class HandlerExecutorServiceTest extends TestCase {
-    private HandlerThread mThread;
+    private Thread mThread;
+    private Looper mLooper;
     private ListeningExecutorService mService;
 
+    @Before
     @Override
     public void setUp() {
-        mThread = new HandlerThread("Test");
-        mThread.start();
-        mService = new HandlerExecutorService(mThread.getLooper());
+        if (Shadows.shadowOf(Looper.getMainLooper()) != null) {
+            // We are in Robolectrics. Use the shadows.
+            final SettableFuture<Looper> looper = SettableFuture.create();
+            mThread = new Thread("test") {
+                @Override
+                public void run() {
+                    Looper.prepare();
+                    final Looper myLooper = Looper.myLooper();
+                    assert myLooper != null;
+
+                    final ShadowLooper shadowLooper = Shadows.shadowOf(myLooper);
+
+                    looper.set(myLooper);
+                    do {
+                        Uninterruptibles.sleepUninterruptibly(20, TimeUnit.MILLISECONDS);
+                        shadowLooper.idle(20);
+                    } while (!shadowLooper.hasQuit());
+                }
+            };
+            mThread.start();
+            mLooper = Futures.getUnchecked(looper);
+            mService = new HandlerExecutorService(mLooper);
+        } else {
+            // We are in Android. Use Android test.
+            final HandlerThread thread = new HandlerThread("test");
+            mThread = thread;
+            thread.start();
+            mLooper = thread.getLooper();
+            mService = new HandlerExecutorService(mLooper);
+        }
+    }
+
+    @After
+    @Override
+    public void tearDown() {
+        mLooper.quit();
+    }
+
+    private static void yield() {
+        // Thread.yield();
+        Uninterruptibles.sleepUninterruptibly(10, TimeUnit.MILLISECONDS);
     }
 
     private void runOrderlyShutdownTest(final ListeningExecutorService service) throws InterruptedException {
@@ -32,12 +86,14 @@ public final class HandlerExecutorServiceTest extends TestCase {
         final ListenableFuture<?> future2 = service.submit(new Runnable() {
             @Override
             public void run() {
+                yield();
                 a.getAndAdd(2);
             }
         });
         final ListenableFuture<?> future4 = service.submit(new Runnable() {
             @Override
             public void run() {
+                yield();
                 a.getAndAdd(4);
             }
         });
@@ -75,23 +131,27 @@ public final class HandlerExecutorServiceTest extends TestCase {
         assertTrue(future4.isDone());
     }
 
+    @Test
     public void testSanityNormalOrderlyShutdown() throws InterruptedException {
         final ListeningExecutorService service = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor());
         runOrderlyShutdownTest(service);
     }
 
+    @Test
     public void testHandlerOrderlyShutdown() throws InterruptedException {
         runOrderlyShutdownTest(mService);
         mThread.join(100); // wait a while to let the thread to shutdown.
         assertFalse(mThread.isAlive());
     }
 
+    @Test
     public void testFutureCancelling() throws InterruptedException {
         final AtomicInteger a = new AtomicInteger(0);
 
         final ListenableFuture<?> future = mService.submit(new Runnable() {
             @Override
             public void run() {
+                yield();
                 a.getAndAdd(2);
                 try {
                     Thread.sleep(400);
@@ -104,6 +164,7 @@ public final class HandlerExecutorServiceTest extends TestCase {
         });
 
         Thread.sleep(150);
+
         assertEquals(2, a.get());
         assertFalse(future.isDone());
         assertFalse(future.isCancelled());
@@ -126,6 +187,7 @@ public final class HandlerExecutorServiceTest extends TestCase {
         service.submit(new Runnable() {
             @Override
             public void run() {
+                yield();
                 a.addAndGet(2);
                 try {
                     Thread.sleep(4000);
@@ -163,29 +225,31 @@ public final class HandlerExecutorServiceTest extends TestCase {
         assertTrue(service.isTerminated());
     }
 
+    @Test
     public void testSanityNormalIncompleteAwaitTermination() throws InterruptedException {
         final ListeningExecutorService service = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor());
         runIncompleteAwaitTerminationTest(service);
     }
 
+    @Test
     public void testIncompleteAwaitTermination() throws InterruptedException {
         runIncompleteAwaitTerminationTest(mService);
         mThread.join(100); // wait a while to let the thread to shutdown.
         assertFalse(mThread.isAlive());
     }
 
+    @Test
     public void testShutdownNowTasksList() throws InterruptedException {
         final Runnable runnable = new Runnable() {
             @Override
             public void run() {
-                Thread.yield();
-                Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
+                yield();
             }
         };
 
         mService.submit(runnable);
 
-        Thread.sleep(700);
+        Thread.sleep(50);
 
         mService.submit(runnable);
         mService.submit(runnable);

@@ -12,6 +12,7 @@ plugins {
 }
 
 apply plugin: 'com.android.library'
+apply plugin: 'jacoco'
 
 android {
     buildToolsVersion '23.0.1'
@@ -23,6 +24,12 @@ android {
 
         versionName '0.1.0'
         versionCode 1
+    }
+
+    sourceSets {
+        androidTest {
+            java.srcDirs = ['src/test/java', 'src/androidTest/java']
+        }
     }
 
     buildTypes {
@@ -40,4 +47,23 @@ dependencies {
     compile 'com.google.guava:guava:19.0-rc2'
     compile 'com.android.support:support-annotations:23.1.0'
     testCompile 'junit:junit:4.12'
+    testCompile 'org.robolectric:robolectric:3.0'
+    androidTestCompile 'junit:junit:4.12'
+    // Not going to include robolectric in Android Test --- it will cause dex method count overflow.
 }
+
+task jacocoTestReport(type: JacocoReport, dependsOn: 'testDebugUnitTest') {
+    group = 'Reporting'
+    description = 'Generate Jacoco coverage reports'
+
+    classDirectories = files("${buildDir}/intermediates/classes/debug")
+    sourceDirectories = files('src/main/java')
+    executionData = files("${buildDir}/jacoco/testDebugUnitTest.exec")
+
+    reports {
+        xml.enabled = true // coveralls plugin depends on xml format report
+        html.enabled = true
+    }
+}
+
+
